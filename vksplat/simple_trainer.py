@@ -24,16 +24,16 @@ TRAIN_DEVICE = -1
 @dataclass
 class TrainerConfig:
 
-    enable_viewer: bool = False  # can affect resource usage, disable during benchmark
+    enable_viewer: bool = True  # can affect resource usage, disable during benchmark
     viewer_port: int = 7007
 
-    output_dir: str = "/mnt/d/gs/outputs"
+    output_dir: str = r"D:\vksplat\output"
     output_ply: str = "splat.ply"
-    train_steps: int = 30000
+    train_steps: int = 30_000
     save_train_renders: bool = False
 
     # dataset
-    dataset_dir: str = "/mnt/d/gs/data/360_v2/bicycle"
+    dataset_dir: str = r"D:\vksplat\data\flowers"
     image_dir: str = "images_4"  # for MipNeRF360: images_2 for indoor, images_4 for outdoor; Paper uses images_(2|4)_png consistent with gsplat
     mask_dir: Optional[str] = None
     sparse_dir: str = "sparse/0"
@@ -50,7 +50,7 @@ class TrainerConfig:
     strategy: Literal['default', 'mcmc'] = "default"
 
     # optimizer
-    max_steps: int = 30000  # used for lr scheduling, not the same as train_steps
+    max_steps: int = 30_000  # used for lr scheduling, not the same as train_steps
     ssim_lambda: float = 0.2  # 0.2 in most works, increase for better visual quality (SSIM/LPIPS) but potentially worse PSNR
     means_lr: float = 1.6e-4  # adjust for large scenes
     means_lr_final: float = 1.6e-6  # adjust for large scenes
@@ -114,8 +114,7 @@ def PRINT(*args, **kargs):
 
 
 def train(config: TrainerConfig):
-    # from build import vksplat  # or build.Debug, build.Release for MSVC
-    import vksplat
+    from build.Release import vksplat  # CMake/MSVC build; run from the vksplat folder
 
     # create and initialize module
     module = vksplat.VkSplat()
@@ -450,8 +449,7 @@ def benchmark_mipnerf360():
 
 if __name__ == "__main__":
 
-    # train_main(TrainerConfig())
-    train_main(MCMCTrainerConfig())
+    train_main(TrainerConfig())
+    # train_main(MCMCTrainerConfig())
 
     # benchmark_mipnerf360()
-
