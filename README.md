@@ -1,9 +1,5 @@
 # VkSplat
 
-[![Website](https://img.shields.io/website?url=https://harry7557558.github.io/vksplat/&logo=github)](https://harry7557558.github.io/vksplat/)
-[![arXiv](https://img.shields.io/badge/arXiv-2605.00219-b31b1b.svg)](https://arxiv.org/abs/2605.00219)
-![License](https://img.shields.io/github/license/harry7557558/vksplat)
-
 This project provides functionality for training 3D Gaussian Splatting (3DGS) models, using Vulkan compute backend with Python binding.
 
 This is code for paper "VkSplat: High-Performance 3DGS Training in Vulkan Compute".
@@ -15,7 +11,6 @@ Features:
 - Quality matching baseline (identical PSNR, SSIM, LPIPS compared to GSplat)
 - Default (original ADC from Inria) and MCMC densification
 - Support for non-centered and distorted/fisheye cameras
-
 
 ## Prerequisites
 
@@ -29,6 +24,13 @@ Features:
 - Vulkan 1.3 and 1.4
 - Windows 10/11, Ubuntu 22.04/24.04/25.04
 - NVIDIA RTX 3090, NVIDIA RTX 4080 Super, NVIDIA RTX 5070 Laptop, AMD Radeon RX 7800 XT, Intel® UHD Graphics 750, Intel® UHD Graphics 770
+
+#### Local Windows setup
+- OS: Windows 10.0.26200.8457
+- GPUs: NVIDIA GeForce RTX 4070 SUPER 12 GB (driver 596.49)
+- Vulkan: instance 1.4.350; RTX 4070 SUPER device API 1.4.329
+- Build tools: CMake 4.2.3, MSVC 14.29.30133, micromamba
+- Python extension build: `vksplat.cp311-win_amd64.pyd` (Python 3.11)
 
 We also received feedback from users who successfully ran VkSplat on Mac devices using MoltenVK.
 
@@ -98,7 +100,13 @@ Before running `simple_trainer.py`, make the following edits if needed:
 
 Running the code should create a work folder. After training, you may find training time and memory in `train.json`, metrics in `eval.json`, saved PLY file in `splat.ply`, as well as validation renders.
 
-If you see message similar to "Shaders must be compiled with USE_XXX=1" for the device you use for training, adjust `vksplat/slang/config.slang`, particularly `USE_EMULATED_INT64` and `USE_EMULATED_F32_ATOMIC` macros. You must recompile shaders for this edit to take effect (see "Recompile shaders" section below).
+If you see a message similar to "Shaders must be compiled with USE_XXX=1" for the device you use for training, this is a shader configuration issue, not a CMake build flag. Adjust `vksplat/slang/config.slang`, particularly `USE_EMULATED_INT64` and `USE_EMULATED_F32_ATOMIC` macros, then recompile shaders for this edit to take effect (see "Recompile shaders" section below). For example, for devices without float32 atomic add support:
+
+```c
+#define USE_EMULATED_F32_ATOMIC 1
+```
+
+After updating shader config, run `python3 compile_shaders.py --force` from the project root. Rebuilding the C++/Python extension is not required unless C++ sources or CMake options changed.
 
 
 ## Development
