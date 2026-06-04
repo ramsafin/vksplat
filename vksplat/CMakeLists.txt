@@ -88,9 +88,26 @@ target_link_libraries(vksplat PRIVATE
 # Compiler-specific options
 target_compile_definitions(vksplat PRIVATE VERSION_INFO=${EXAMPLE_VERSION_INFO})
 
-if(DEFINED OPTIMIZATION_LEVEL)
-    target_compile_definitions(vksplat PRIVATE
-        "OPTIMIZATION_LEVEL=${OPTIMIZATION_LEVEL}")
+foreach(VKSPLAT_DEFINE OPTIMIZATION_LEVEL SUBGROUP_SIZE MAX_WORKGROUP_INVOCATIONS SH_REORDER_SIZE USE_EMULATED_INT64 USE_EMULATED_F32_ATOMIC)
+    if(DEFINED ${VKSPLAT_DEFINE})
+        target_compile_definitions(vksplat PRIVATE
+            "${VKSPLAT_DEFINE}=${${VKSPLAT_DEFINE}}")
+    endif()
+endforeach()
+
+option(VKSPLAT_BUILD_OHOS_RUNNER "Build native OHOS/local runner executable" OFF)
+if(VKSPLAT_BUILD_OHOS_RUNNER)
+    set(RUNNER_SOURCES ${SOURCES})
+    list(REMOVE_ITEM RUNNER_SOURCES src/python_bindings.cpp)
+    list(APPEND RUNNER_SOURCES src/ohos_runner.cpp)
+    add_executable(vksplat_ohos_runner ${RUNNER_SOURCES} ${HEADERS})
+    target_link_libraries(vksplat_ohos_runner PRIVATE Vulkan::Vulkan glm::glm)
+    foreach(VKSPLAT_DEFINE OPTIMIZATION_LEVEL SUBGROUP_SIZE MAX_WORKGROUP_INVOCATIONS SH_REORDER_SIZE USE_EMULATED_INT64 USE_EMULATED_F32_ATOMIC)
+        if(DEFINED ${VKSPLAT_DEFINE})
+            target_compile_definitions(vksplat_ohos_runner PRIVATE
+                "${VKSPLAT_DEFINE}=${${VKSPLAT_DEFINE}}")
+        endif()
+    endforeach()
 endif()
 
 # Set properties
@@ -100,12 +117,19 @@ set_target_properties(vksplat PROPERTIES
 )
 
 # Platform-specific settings
+set(VKSPLAT_PLATFORM_DEFINE "")
 if(WIN32)
-    target_compile_definitions(vksplat PRIVATE VK_USE_PLATFORM_WIN32_KHR)
+    set(VKSPLAT_PLATFORM_DEFINE VK_USE_PLATFORM_WIN32_KHR)
 elseif(UNIX AND NOT APPLE)
-    target_compile_definitions(vksplat PRIVATE VK_USE_PLATFORM_XLIB_KHR)
+    set(VKSPLAT_PLATFORM_DEFINE VK_USE_PLATFORM_XLIB_KHR)
 elseif(APPLE)
-    target_compile_definitions(vksplat PRIVATE VK_USE_PLATFORM_MACOS_MVK)
+    set(VKSPLAT_PLATFORM_DEFINE VK_USE_PLATFORM_MACOS_MVK)
+endif()
+if(VKSPLAT_PLATFORM_DEFINE)
+    target_compile_definitions(vksplat PRIVATE ${VKSPLAT_PLATFORM_DEFINE})
+    if(TARGET vksplat_ohos_runner)
+        target_compile_definitions(vksplat_ohos_runner PRIVATE ${VKSPLAT_PLATFORM_DEFINE})
+    endif()
 endif()
 
 # Install target

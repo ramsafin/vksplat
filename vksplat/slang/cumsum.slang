@@ -1,3 +1,4 @@
+#include "config.slang"
 #define CUMSUM_PHASE_blockScan 1
 #define CUMSUM_PHASE_scanBlockSums 2
 #define CUMSUM_PHASE_addBlockOffsets 3
@@ -23,7 +24,7 @@
 #endif
 
 #ifndef BLOCK_SIZE
-    static const uint BLOCK_SIZE_0 = 1024;
+    static const uint BLOCK_SIZE_0 = CUMSUM_BLOCK_SIZE;
     #define BLOCK_SIZE min(BLOCK_SIZE_0, SUBGROUP_SIZE*SUBGROUP_SIZE*SUBGROUP_SIZE)
 #else
     static const uint BLOCK_SIZE_0 = BLOCK_SIZE;

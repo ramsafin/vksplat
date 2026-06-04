@@ -68,12 +68,6 @@ float hash_u32_float(uint32_t x) {
     return hash_u32_u32(x) / 4294967296.0;
 }
 
-uint64_t hash_u32_u64(uint32_t a, uint32_t b) {
-    uint64_t x = hash_u32_u32(a ^ ((b + 1u) * uint32_t(0x9e3779b9)));
-    uint64_t y = hash_u32_u32(b ^ ((a + 1u) * uint32_t(0x9e3779b9)));
-    return (x << 32) | y;
-}
-
 #if USE_EMULATED_INT64
 
 uint32_t2 hash_u32_u322(uint32_t a, uint32_t b) {
@@ -100,6 +94,14 @@ uint32_t mod64(uint32_t2 val, uint32_t m) {
     r = (loP % m + hiP % m * (k % m)) % m;
     r = (r + (lo % m)) % m;
     return r;
+}
+
+#else
+
+uint64_t hash_u32_u64(uint32_t a, uint32_t b) {
+    uint64_t x = hash_u32_u32(a ^ ((b + 1u) * uint32_t(0x9e3779b9)));
+    uint64_t y = hash_u32_u32(b ^ ((a + 1u) * uint32_t(0x9e3779b9)));
+    return (x << 32) | y;
 }
 
 #endif

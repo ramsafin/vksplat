@@ -45,7 +45,7 @@ VulkanGSPipeline::DeviceRequirement VulkanGSRenderer::getDeviceRequirement() {
     })();
     return DeviceRequirement{
         { 12*16777216/256, 4096/std::min(TILE_HEIGHT,TILE_WIDTH), 1 },
-        { 1024, 1*std::max(TILE_HEIGHT,TILE_WIDTH), 1 },
+        { MAX_WORKGROUP_INVOCATIONS, 1*std::max(TILE_HEIGHT,TILE_WIDTH), 1 },
         minSharedMemory
     };
 }
@@ -373,7 +373,7 @@ void VulkanGSRenderer::executeCumsum(
     DEVICE_GUARD;
 
     size_t num_elements = input_buffer.deviceSize();
-    const size_t block_0 = 1024;
+    const size_t block_0 = CUMSUM_BLOCK_SIZE;
     const size_t block_limit = deviceInfo.subgroupSize*deviceInfo.subgroupSize*deviceInfo.subgroupSize;
     const size_t block = std::min(block_0, block_limit);
 
@@ -670,7 +670,7 @@ int32_t VulkanGSRenderer::executeSum(
     }, COMPUTE_SHADER_READ_WRITE);
 
     executeCompute(
-        {{num_elements, 1024}},
+        {{num_elements, SUM_BLOCK_SIZE}},
         &num_elements, sizeof(uint32_t),
         pipeline_sum,
         {
