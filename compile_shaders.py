@@ -20,8 +20,10 @@ import json
 class CompileConfig:
     """Configuration for shader compilation"""
     slang_src_path: Path = Path("./vksplat/slang")
+    shader_src_path: Path = Path("./vksplat/shader")
     shader_dst_path: Path = Path("./vksplat/shader")
     generated_dst_path: Path = Path("./vksplat/shader/generated")
+    global_defines: Dict[str, int] = None
     # slangc_compile_args: str = "-stage compute -O3 -fp-mode fast -line-directive-mode none"
     slangc_compile_args: str = "-stage compute -O -fp-mode fast -line-directive-mode none"
     glslc_compile_args: str = "-O --target-spv=spv1.5 --target-env=vulkan1.2"
@@ -42,9 +44,11 @@ class ShaderCompiler:
         self.config = config
         self.slangc = self._find_slangc()
         self.glslc = self._find_glslc()
+        if self.config.global_defines is None:
+            self.config.global_defines = {}
         
-        self.config.shader_dst_path.mkdir(exist_ok=True)
-        self.config.generated_dst_path.mkdir(exist_ok=True)
+        self.config.shader_dst_path.mkdir(parents=True, exist_ok=True)
+        self.config.generated_dst_path.mkdir(parents=True, exist_ok=True)
 
     def _find_slangc(self) -> Path:
         """Find slangc executable"""
@@ -86,7 +90,7 @@ class ShaderCompiler:
         files_expanded = []
         for path in files:
             if '.' not in path:
-                path = os.path.join(self.config.shader_dst_path, path)
+                path = os.path.join(self.config.shader_src_path, path)
             if os.path.isdir(path):
                 for root, _, files in os.walk(path):
                     for file in files:
@@ -104,6 +108,8 @@ class ShaderCompiler:
             hasher.update(f.read())
         hasher.update(bytearray(self.config.slangc_compile_args, 'utf-8'))
         hasher.update(bytearray(self.config.glslc_compile_args, 'utf-8'))
+        for key, value in sorted((self.config.global_defines or {}).items()):
+            hasher.update(bytearray(f"{key}={value}", 'utf-8'))
         return hasher.hexdigest()
 
     def _should_compile(self, checksum_key: str, checksum: str) -> bool:
@@ -132,7 +138,7 @@ class ShaderCompiler:
         output_file = self.config.generated_dst_path / job_name  # type: Path
         
         # Add defines
-        for define, value in job.defines.items():
+        for define, value in {**self.config.global_defines, **job.defines}.items():
             cmd.extend([f"-D{define}={value}"])
         
         # Add target and other args
@@ -144,12 +150,14 @@ class ShaderCompiler:
         return output
 
     def _compile_shader_glsl(self, source_file: Path, job: ShaderJob, target: Literal["glsl", "spirv"], ext: Literal["comp", "spv"]) -> Tuple[bool, str]:
-        cmd = [str(self.glslc), str(self.config.shader_dst_path / source_file / job.name)]
+        cmd = [str(self.glslc), str(self.config.shader_src_path / source_file / job.name)]
         job_name = Path(job.name).with_suffix('.'+ext)
-        output_file = self.config.shader_dst_path / source_file / job_name
+        output_dir = self.config.shader_dst_path / source_file
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = output_dir / job_name
         
         # Add defines
-        for define, value in job.defines.items():
+        for define, value in {**self.config.global_defines, **job.defines}.items():
             cmd.extend([f"-D{define}={value}"])
         
         # Add target and other args
@@ -235,7 +243,7 @@ class ShaderCompiler:
         # Summation
         jobs.append(("sum.slang", [
             ShaderJob("sum", {}),
-        ], []))
+        ], ["config.slang"]))
 
         # Fused projection backward and optimizer
         jobs.append(("fused_projection_backward_optimizer.slang", [
@@ -257,7 +265,7 @@ class ShaderCompiler:
                 ("block_scan", 1), ("scan_block_sums", 2),
                 ("add_block_offsets", 3), ("single_pass", 0)
             ]
-        ], []))
+        ], ["config.slang"]))
 
         # Alpha Blending
         tensor_bwd_configs = [(0, 8, 0), (0, 8, 8), (1, 16, 0)]
@@ -337,13 +345,27 @@ def main():
                        help="Destination directory for compiled shaders")
     parser.add_argument("-j", "--jobs", type=int, help="Number of parallel jobs")
     parser.add_argument("--force", action="store_true", help="Force recompilation of all shaders")
+    parser.add_argument("--variant", type=str, help="Compile into a subdirectory under the destination shader root")
+    parser.add_argument("-D", "--define", action="append", default=[],
+                        help="Global shader define in KEY=VALUE form; repeatable")
     
     args = parser.parse_args()
+
+    global_defines = {}
+    for item in args.define:
+        if "=" not in item:
+            raise ValueError(f"Invalid define '{item}', expected KEY=VALUE")
+        key, value = item.split("=", 1)
+        global_defines[key] = int(value, 0)
+
+    shader_dst = args.dst / args.variant if args.variant else args.dst
     
     config = CompileConfig(
         slang_src_path=args.src,
-        shader_dst_path=args.dst,
-        generated_dst_path=(args.dst / "generated"),
+        shader_src_path=args.dst,
+        shader_dst_path=shader_dst,
+        generated_dst_path=(shader_dst / "generated"),
+        global_defines=global_defines,
         slangc_path=args.slangc,
         glslc_path=args.glslc,
         max_workers=args.jobs

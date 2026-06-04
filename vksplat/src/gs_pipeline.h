@@ -9,6 +9,7 @@
 #include <functional>
 #include <array>
 #include <variant>
+#include <set>
 
 
 #include <cassert>
@@ -120,6 +121,14 @@ protected:
         bool hasInt16;
         bool hasInt64;
         bool hasFloat32AtomicAdd;
+        bool hasSubgroupSizeControlExtension;
+        bool hasShaderAtomicFloatExtension;
+        bool hasRequiredSubgroupSizeStages;
+        bool hasComputeFullSubgroups;
+        uint32_t maxWorkGroupInvocations;
+        uint32_t maxPushConstantsSize;
+        uint64_t maxStorageBufferRange;
+        uint32_t timestampValidBits;
         DeviceVendor vendor;
         uint32_t vendorId;
         std::string name;

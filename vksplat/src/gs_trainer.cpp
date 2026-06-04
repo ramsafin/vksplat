@@ -1303,7 +1303,7 @@ void VulkanGSTrainer::executeMortonSorting(
 
     barrierAllGaussParams(buffers);
     executeCompute(
-        {{num_splats, SUBGROUP_SIZE*SUBGROUP_SIZE}},
+        {{num_splats, MORTON_SORT_STATS_BLOCK_SIZE}},
         &num_splats, sizeof(uint32_t),
         pipeline_morton_sort.compute_stats,
         {
@@ -1346,7 +1346,7 @@ void VulkanGSTrainer::executeMortonSorting(
                 is_sh ? offset : stride
             };
             executeCompute(
-                {{num_splats_ceil*(is_sh ? 1 : stride), 1024}},
+                {{num_splats_ceil*(is_sh ? 1 : stride), MORTON_SORT_APPLY_BLOCK_SIZE}},
                 &uniform, 2*sizeof(uniform),
                 is_sh ? pipeline_morton_sort.apply_indices_sh :
                     pipeline_morton_sort.apply_indices,
@@ -1361,7 +1361,7 @@ void VulkanGSTrainer::executeMortonSorting(
                 { buffers._temp_gauss_attr.deviceBuffer, COMPUTE_SHADER_WRITE },
             }, COMPUTE_SHADER_READ_WRITE);
             executeCompute(
-                {{num_splats_ceil*(is_sh ? 1 : stride), 1024}},
+                {{num_splats_ceil*(is_sh ? 1 : stride), MORTON_SORT_APPLY_BLOCK_SIZE}},
                 &uniform, 2*sizeof(uniform),
                 is_sh ? pipeline_morton_sort.update_buffer_sh :
                     pipeline_morton_sort.update_buffer,

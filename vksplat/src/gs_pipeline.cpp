@@ -236,6 +236,18 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
         VkPhysicalDeviceProperties deviceProperties;
         vkGetPhysicalDeviceProperties(device, &deviceProperties);
         auto& limits = deviceProperties.limits;
+
+        uint32_t extensionCount = 0;
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+        std::vector<VkExtensionProperties> extensions(extensionCount);
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensions.data());
+        std::set<std::string> extensionNames;
+        for (const auto& extension : extensions)
+            extensionNames.insert(extension.extensionName);
+        bool hasSubgroupSizeControlExtension =
+            extensionNames.count(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME) != 0;
+        bool hasShaderAtomicFloatExtension =
+            extensionNames.count(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME) != 0;
         uint32_t maxGroupsX = limits.maxComputeWorkGroupCount[0];
         uint32_t maxGroupsY = limits.maxComputeWorkGroupCount[1];
         uint32_t maxGroupsZ = limits.maxComputeWorkGroupCount[2];
@@ -260,11 +272,19 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
         VkPhysicalDeviceSubgroupProperties subgroupProperties{};
         subgroupProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
         subgroupProperties.pNext = VK_NULL_HANDLE;
+        VkPhysicalDeviceSubgroupSizeControlPropertiesEXT subgroupSizeControlProperties{};
+        subgroupSizeControlProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES_EXT;
+        subgroupSizeControlProperties.pNext = nullptr;
+        subgroupProperties.pNext = hasSubgroupSizeControlExtension ? &subgroupSizeControlProperties : nullptr;
         VkPhysicalDeviceProperties2KHR deviceProperties2{};
         deviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
         deviceProperties2.pNext = &subgroupProperties;
         vkGetPhysicalDeviceProperties2(device, &deviceProperties2);
-        bool validSubgroupSize = subgroupProperties.subgroupSize >= SUBGROUP_SIZE;
+        bool canRequestCompiledSubgroupSize = hasSubgroupSizeControlExtension &&
+            subgroupSizeControlProperties.minSubgroupSize <= SUBGROUP_SIZE &&
+            subgroupSizeControlProperties.maxSubgroupSize >= SUBGROUP_SIZE &&
+            (subgroupSizeControlProperties.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT);
+        bool validSubgroupSize = subgroupProperties.subgroupSize == SUBGROUP_SIZE || canRequestCompiledSubgroupSize;
 
         // check compute pipeline.support
         uint32_t queue_family_count = 0;
@@ -280,20 +300,25 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
         bool validQueueFamily = ((int32_t)queueFamilyIdx != -1);
 
         // check feature support
-        bool hasInt16 = true, hasInt64 = true, hasFloat32AtomicAdd = true;
+        bool hasInt16 = true, hasInt64 = true, hasFloat32AtomicAdd = false;
         VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_float_features{};
         atomic_float_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
         atomic_float_features.pNext = VK_NULL_HANDLE;
         VkPhysicalDeviceFeatures2 deviceFeatures2 = {};
         deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        deviceFeatures2.pNext = &atomic_float_features;
+        deviceFeatures2.pNext = hasShaderAtomicFloatExtension ? &atomic_float_features : nullptr;
         vkGetPhysicalDeviceFeatures2(device, &deviceFeatures2);
         if (deviceFeatures2.features.shaderInt16 == VK_FALSE)
             hasInt16 = false;
         if (deviceFeatures2.features.shaderInt64 == VK_FALSE)
             hasInt64 = false;
-        if (atomic_float_features.shaderBufferFloat32AtomicAdd == VK_FALSE)
-            hasFloat32AtomicAdd = false;
+        if (hasShaderAtomicFloatExtension && atomic_float_features.shaderBufferFloat32AtomicAdd != VK_FALSE)
+            hasFloat32AtomicAdd = true;
+
+        uint32_t timestampValidBits = validQueueFamily ? queue_families[queueFamilyIdx].timestampValidBits : 0;
+        bool compiledInt64Ok = hasInt64 || USE_EMULATED_INT64;
+        bool compiledFloatAtomicOk = hasFloat32AtomicAdd || USE_EMULATED_F32_ATOMIC;
+        bool validWorkGroupInvocations = limits.maxComputeWorkGroupInvocations >= MAX_WORKGROUP_INVOCATIONS;
 
         DeviceVendor vendor = DeviceVendor::Unknown;
         if (deviceProperties.vendorID == 0x10DE)
@@ -307,8 +332,8 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
         else if (deviceProperties.vendorID == 0x5143)
             vendor = DeviceVendor::Qualcomm;
 
-        bool softViable = validSubgroupSize && validGroupSize[3] && validQueueFamily && hasInt16;
-        bool viable = softViable && validGroupCount[3] && validSharedSize && hasInt64 && hasFloat32AtomicAdd;
+        bool softViable = validSubgroupSize && validGroupSize[3] && validWorkGroupInvocations && validQueueFamily && hasInt16;
+        bool viable = softViable && validGroupCount[3] && validSharedSize && compiledInt64Ok && compiledFloatAtomicOk;
         SelectedDevice deviceInfo{
             (int)i, device, queueFamilyIdx,
             {
@@ -317,6 +342,13 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
                 maxGroupsX, maxGroupsY, maxGroupsZ,
                 maxThreadsX, maxThreadsY, maxThreadsZ,
                 hasInt16, hasInt64, hasFloat32AtomicAdd,
+                hasSubgroupSizeControlExtension, hasShaderAtomicFloatExtension,
+                (subgroupSizeControlProperties.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT) != 0,
+                subgroupSizeControlProperties.computeFullSubgroups != VK_FALSE,
+                limits.maxComputeWorkGroupInvocations,
+                limits.maxPushConstantsSize,
+                limits.maxStorageBufferRange,
+                timestampValidBits,
                 vendor, deviceProperties.vendorID,
                 deviceProperties.deviceName
             }
@@ -332,8 +364,9 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
             " subgroup=\033[%dm%u\033[m, "
             "maxGroups=[\033[%dm%u\033[m \033[%dm%u\033[m \033[%dm%u\033[m], "
             "maxThreads=[\033[%dm%u\033[m \033[%dm%u\033[m \033[%dm%u\033[m], "
-            "maxShared=\033[%dm%u\033[m, "
-            "\033[%dmI16\033[m|\033[%dmI64\033[m|\033[%dmF32Atomic\033[m\n",
+            "maxShared=\033[%dm%u\033[m, maxInvocations=\033[%dm%u\033[m, "
+            "\033[%dmI16\033[m|\033[%dmI64\033[m|\033[%dmF32Atomic\033[m "
+            "ext(SubgroupSizeControl=%d, ShaderAtomicFloat=%d)\n",
             (int)i, deviceProperties.deviceName,
             viable ? kANSIGreen : softViable ? kANSIOrange : kANSIRed,
             viable ? "VIABLE" : softViable ? "POSSIBLY VIABLE" : "NOT VIABLE",
@@ -345,15 +378,19 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
             validGroupSize[1] ? kANSIDefault : kANSIRed, maxThreadsY,
             validGroupSize[2] ? kANSIDefault : kANSIRed, maxThreadsZ,
             validSharedSize ? kANSIDefault : kANSIOrange, limits.maxComputeSharedMemorySize,
+            validWorkGroupInvocations ? kANSIDefault : kANSIRed, limits.maxComputeWorkGroupInvocations,
             hasInt16 ? kANSIDefault : kANSIRed,
-            hasInt64 ? kANSIDefault : kANSIOrange,
-            hasFloat32AtomicAdd ? kANSIDefault : kANSIOrange
+            compiledInt64Ok ? kANSIDefault : kANSIOrange,
+            compiledFloatAtomicOk ? kANSIDefault : kANSIOrange,
+            (int)hasSubgroupSizeControlExtension, (int)hasShaderAtomicFloatExtension
         );
         if (softViable) {
-            if (!hasInt64)
+            if (!hasInt64 && !USE_EMULATED_INT64)
                 printf("  \033[%dm%s\033[m\n", kANSIOrange, "WARNING: To use this device, shaders must be compiled with USE_EMULATED_INT64=1.");
-            if (!hasFloat32AtomicAdd)
+            if (!hasFloat32AtomicAdd && !USE_EMULATED_F32_ATOMIC)
                 printf("  \033[%dm%s\033[m\n", kANSIOrange, "WARNING: To use this device, shaders must be compiled with USE_EMULATED_F32_ATOMIC=1.");
+            if (!validWorkGroupInvocations)
+                printf("  \033[%dm%s\033[m\n", kANSIOrange, "WARNING: This device supports fewer workgroup invocations than this binary was compiled for.");
             if (!validGroupCount[3])
                 printf("  \033[%dm%s\033[m\n", kANSIOrange, "WARNING: This device may not work if you want to train a large scene.");
             if (!validSharedSize)
@@ -388,6 +425,9 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
         printf("\033[%dm%s\033[m\n", kANSIOrange, "WARNING: Float32AtomicAdd is not available. Make sure shaders are compiled with USE_EMULATED_F32_ATOMIC=1.");
     if (!deviceInfo.hasInt64)
         printf("\033[%dm%s\033[m\n", kANSIOrange, "WARNING: Int64 is not available. Make sure shaders are compiled with USE_EMULATED_INT64=1.");
+    if (deviceInfo.subgroupSize != SUBGROUP_SIZE && !deviceInfo.hasSubgroupSizeControlExtension)
+        printf("\033[%dmWARNING: Native subgroup size (%u) differs from compiled SUBGROUP_SIZE (%u), and subgroup-size-control is unavailable.\033[m\n",
+            kANSIOrange, deviceInfo.subgroupSize, (uint32_t)SUBGROUP_SIZE);
     printf("\n");
     fflush(stdout);
 }
@@ -402,6 +442,18 @@ VulkanGSPipeline::get_device_info() const {
     result["has_int16"] = deviceInfo.hasInt16;
     result["has_int64"] = deviceInfo.hasInt64;
     result["has_float32_atomic_add"] = deviceInfo.hasFloat32AtomicAdd;
+    result["has_subgroup_size_control_extension"] = deviceInfo.hasSubgroupSizeControlExtension;
+    result["has_shader_atomic_float_extension"] = deviceInfo.hasShaderAtomicFloatExtension;
+    result["has_required_subgroup_size_compute_stage"] = deviceInfo.hasRequiredSubgroupSizeStages;
+    result["has_compute_full_subgroups"] = deviceInfo.hasComputeFullSubgroups;
+    result["max_compute_work_group_invocations"] = deviceInfo.maxWorkGroupInvocations;
+    result["max_push_constants_size"] = deviceInfo.maxPushConstantsSize;
+    result["max_storage_buffer_range"] = std::to_string(deviceInfo.maxStorageBufferRange);
+    result["timestamp_valid_bits"] = deviceInfo.timestampValidBits;
+    result["compiled_subgroup_size"] = (uint32_t)SUBGROUP_SIZE;
+    result["compiled_max_workgroup_invocations"] = (uint32_t)MAX_WORKGROUP_INVOCATIONS;
+    result["compiled_use_emulated_int64"] = (bool)USE_EMULATED_INT64;
+    result["compiled_use_emulated_f32_atomic"] = (bool)USE_EMULATED_F32_ATOMIC;
     result["vendor"] = deviceInfo.vendorId;
     result["name"] = deviceInfo.name;
     return result;
@@ -419,8 +471,10 @@ void VulkanGSPipeline::createDevice() {
     
     VkPhysicalDeviceFeatures enabledFeatures = {};
     enabledFeatures.shaderInt16 = VK_TRUE;
-    if (deviceInfo.hasInt64)
+    if (deviceInfo.hasInt64 && !USE_EMULATED_INT64)
         enabledFeatures.shaderInt64 = VK_TRUE;
+
+    std::vector<const char*> device_extensions;
 
     VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_float_features = {};
     atomic_float_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
@@ -432,25 +486,39 @@ void VulkanGSPipeline::createDevice() {
     subgroupSizeControlFeatures.subgroupSizeControl = VK_TRUE;
     subgroupSizeControlFeatures.computeFullSubgroups = VK_TRUE;
     subgroupSizeControlFeatures.pNext = VK_NULL_HANDLE;
-    if (deviceInfo.hasFloat32AtomicAdd)
-        subgroupSizeControlFeatures.pNext = &atomic_float_features;
+
+    void* featureChain = nullptr;
+    bool needsSubgroupSizeControl = deviceInfo.subgroupSize != SUBGROUP_SIZE;
+    if (needsSubgroupSizeControl) {
+        if (!deviceInfo.hasSubgroupSizeControlExtension || !deviceInfo.hasRequiredSubgroupSizeStages)
+            _THROW_ERROR_ALWAYS("Compiled subgroup size does not match native subgroup size, and subgroup-size-control is unavailable");
+        device_extensions.push_back(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+        subgroupSizeControlFeatures.pNext = featureChain;
+        featureChain = &subgroupSizeControlFeatures;
+    }
+
+    if (!USE_EMULATED_F32_ATOMIC) {
+        if (!deviceInfo.hasShaderAtomicFloatExtension || !deviceInfo.hasFloat32AtomicAdd)
+            _THROW_ERROR_ALWAYS("Native float32 atomic add was requested, but VK_EXT_shader_atomic_float support is unavailable");
+        device_extensions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+        atomic_float_features.pNext = featureChain;
+        featureChain = &atomic_float_features;
+    }
+
+    if (!USE_EMULATED_INT64 && !deviceInfo.hasInt64)
+        _THROW_ERROR_ALWAYS("Native int64 was requested, but shaderInt64 is unavailable");
 
     VkDeviceCreateInfo create_info = {};
     create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     create_info.pQueueCreateInfos = &queue_create_info;
     create_info.queueCreateInfoCount = 1;
     create_info.pEnabledFeatures = &enabledFeatures;
-
-    std::vector<const char*> device_extensions = {
-        VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
-        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
-    };
     create_info.enabledExtensionCount = (uint32_t)device_extensions.size();
-    create_info.ppEnabledExtensionNames = device_extensions.data();
-    create_info.pNext = &subgroupSizeControlFeatures;
+    create_info.ppEnabledExtensionNames = device_extensions.empty() ? nullptr : device_extensions.data();
+    create_info.pNext = featureChain;
 
     if (vkCreateDevice(physical_device, &create_info, nullptr, &device) != VK_SUCCESS) {
-        _THROW_ERROR("Failed to create device");
+        _THROW_ERROR_ALWAYS("Failed to create device");
     }
     
     vkGetDeviceQueue(device, queue_family_index, 0, &command_queue);
@@ -865,10 +933,10 @@ void VulkanGSPipeline::createComputePipeline(_ComputePipeline &pipeline, const s
     compute_shader_stage_info.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     compute_shader_stage_info.module = pipeline.shader;
     compute_shader_stage_info.pName = "main";
-    if (compatible_subgroup_size && (
-        deviceInfo.subgroupSize != SUBGROUP_SIZE ||
-        deviceInfo.vendor == DeviceVendor::Intel_R_
-    ))
+    if (compatible_subgroup_size &&
+        deviceInfo.subgroupSize != SUBGROUP_SIZE &&
+        deviceInfo.hasSubgroupSizeControlExtension &&
+        deviceInfo.hasRequiredSubgroupSizeStages)
         compute_shader_stage_info.pNext = &req;
 
     VkComputePipelineCreateInfo pipeline_info = {};

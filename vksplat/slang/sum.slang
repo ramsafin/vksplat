@@ -1,5 +1,6 @@
+#include "config.slang"
 #ifndef BLOCK_SIZE
-static const uint BLOCK_SIZE = 1024;
+static const uint BLOCK_SIZE = SUM_BLOCK_SIZE;
 #endif
 
 layout(binding=0) StructuredBuffer<int32_t> g_input;  // (N,)
