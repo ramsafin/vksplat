@@ -1,5 +1,5 @@
 #ifndef SUBGROUP_SIZE
-#define SUBGROUP_SIZE 32
+#define SUBGROUP_SIZE 64
 #endif
 
 #define ALPHA_THRESHOLD (1.f/255.f)
@@ -62,11 +62,11 @@
 static const float M_PI = 3.14159265358979;
 
 #ifndef USE_EMULATED_INT64
-#define USE_EMULATED_INT64 0
+#define USE_EMULATED_INT64 1
 #endif
 
 #ifndef USE_EMULATED_F32_ATOMIC
-#define USE_EMULATED_F32_ATOMIC 0
+#define USE_EMULATED_F32_ATOMIC 1
 #endif
 
 #if USE_EMULATED_F32_ATOMIC

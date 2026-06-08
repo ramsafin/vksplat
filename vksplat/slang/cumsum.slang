@@ -19,11 +19,11 @@
 
 
 #ifndef SUBGROUP_SIZE
-#define SUBGROUP_SIZE 32
+#define SUBGROUP_SIZE 64
 #endif
 
 #ifndef BLOCK_SIZE
-    static const uint BLOCK_SIZE_0 = 1024;
+    static const uint BLOCK_SIZE_0 = 512;
     #define BLOCK_SIZE min(BLOCK_SIZE_0, SUBGROUP_SIZE*SUBGROUP_SIZE*SUBGROUP_SIZE)
 #else
     static const uint BLOCK_SIZE_0 = BLOCK_SIZE;

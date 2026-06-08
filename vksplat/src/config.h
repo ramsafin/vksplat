@@ -6,7 +6,7 @@
 #define ENABLE_ASSERTION 0
 
 #ifndef SUBGROUP_SIZE
-#define SUBGROUP_SIZE 32
+#define SUBGROUP_SIZE 64
 #endif
 
 #define TILE_HEIGHT 16
