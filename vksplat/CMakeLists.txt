@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(VkSplat)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 if (MSVC)
     set(CMAKE_CXX_FLAGS "/W4")
     # set(CMAKE_CXX_FLAGS_DEBUG "/Zi /fsanitize=address")
@@ -50,8 +47,8 @@ if(NOT glm_FOUND)
     FetchContent_MakeAvailable(glm)
 endif()
 
-# Source files
-set(SOURCES
+# Core source files shared by Python bindings and native executables.
+set(VKSPLAT_CORE_SOURCES
     src/buffer.cpp
     src/colmap_reader.cpp
     src/knn.cpp
@@ -60,10 +57,10 @@ set(SOURCES
     src/gs_renderer.cpp
     src/gs_trainer.cpp
     src/perf_timer.cpp
-    src/python_bindings.cpp
+    src/training_session.cpp
 )
 
-set(HEADERS
+set(VKSPLAT_CORE_HEADERS
     src/config.h
     src/buffer.h
     src/colmap_reader.h
@@ -73,25 +70,47 @@ set(HEADERS
     src/gs_renderer.h
     src/gs_trainer.h
     src/perf_timer.h
+    src/training_session.h
 )
 
-# Create the Python module
-pybind11_add_module(vksplat ${SOURCES} ${HEADERS})
+add_library(vksplat_core
+    ${VKSPLAT_CORE_SOURCES}
+    ${VKSPLAT_CORE_HEADERS}
+)
 
-# Link libraries
-target_link_libraries(vksplat PRIVATE 
+target_include_directories(vksplat_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_features(vksplat_core PUBLIC cxx_std_17)
+set_target_properties(vksplat_core PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+
+target_link_libraries(vksplat_core PUBLIC
     Vulkan::Vulkan
     glm::glm
     # asan
 )
 
-# Compiler-specific options
-target_compile_definitions(vksplat PRIVATE VERSION_INFO=${EXAMPLE_VERSION_INFO})
-
 if(DEFINED OPTIMIZATION_LEVEL)
-    target_compile_definitions(vksplat PRIVATE
+    target_compile_definitions(vksplat_core PUBLIC
         "OPTIMIZATION_LEVEL=${OPTIMIZATION_LEVEL}")
 endif()
+
+# Platform-specific settings
+if(WIN32)
+    target_compile_definitions(vksplat_core PUBLIC VK_USE_PLATFORM_WIN32_KHR)
+elseif(UNIX AND NOT APPLE)
+    target_compile_definitions(vksplat_core PUBLIC VK_USE_PLATFORM_XLIB_KHR)
+elseif(APPLE)
+    target_compile_definitions(vksplat_core PUBLIC VK_USE_PLATFORM_MACOS_MVK)
+endif()
+
+# Create the Python module from the bindings adapter only.
+pybind11_add_module(vksplat src/python_bindings.cpp)
+target_link_libraries(vksplat PRIVATE vksplat_core)
+target_compile_definitions(vksplat PRIVATE VERSION_INFO=${EXAMPLE_VERSION_INFO})
 
 # Set properties
 set_target_properties(vksplat PROPERTIES
@@ -99,14 +118,11 @@ set_target_properties(vksplat PROPERTIES
     INTERPROCEDURAL_OPTIMIZATION TRUE
 )
 
-# Platform-specific settings
-if(WIN32)
-    target_compile_definitions(vksplat PRIVATE VK_USE_PLATFORM_WIN32_KHR)
-elseif(UNIX AND NOT APPLE)
-    target_compile_definitions(vksplat PRIVATE VK_USE_PLATFORM_XLIB_KHR)
-elseif(APPLE)
-    target_compile_definitions(vksplat PRIVATE VK_USE_PLATFORM_MACOS_MVK)
-endif()
+# Native C++ training executable. It uses the reusable core library directly and
+# does not link against Python, pybind11, NumPy, or the Python viewer.
+add_executable(vksplat_train apps/train_app.cpp)
+target_link_libraries(vksplat_train PRIVATE vksplat_core)
+target_compile_features(vksplat_train PRIVATE cxx_std_17)
 
 # Install target
 install(TARGETS vksplat DESTINATION .)
