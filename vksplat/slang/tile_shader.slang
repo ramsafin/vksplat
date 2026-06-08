@@ -41,8 +41,7 @@ layout(binding=4) StructuredBuffer<int32_t> index_buffer_offset;
 layout(binding=5) RWStructuredBuffer<sortingKey_t> out_unsorted_keys;
 layout(binding=6) RWStructuredBuffer<int32_t> out_unsorted_gauss_idx;
 
-#define BLOCK_SIZE 64
-#define NUM_SUBGROUPS (BLOCK_SIZE / SUBGROUP_SIZE)
+#define BLOCK_SIZE SUBGROUP_SIZE
 
 [shader("compute")]
 [numthreads(BLOCK_SIZE, 1, 1)]

@@ -1,25 +1,81 @@
 #include "training_session.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
-// Hardcoded development defaults. Adjust these constants before running locally.
-constexpr int kTrainDeviceId = -1;
-constexpr int kTrainSteps = 30000;
 constexpr int kProgressInterval = 100;
 
-const std::filesystem::path kProjectDir = ".";
-const std::filesystem::path kDatasetDir = R"(D:\vksplat\data\flowers)";
-const std::filesystem::path kImageDir = "images_4";
-const std::filesystem::path kSparseDir = "sparse/0";
-const std::filesystem::path kMaskDir = "";
-const std::filesystem::path kOutputDir = R"(D:\vksplat\output\cpp_train)";
-const std::string kOutputPlyFilename = "splat.ply";
+struct AppOptions {
+    int train_device_id = -1;
+    int train_steps = 30000;
+    std::filesystem::path shader_dir = "shader";
+    std::filesystem::path dataset_dir = R"(D:\vksplat\data\flowers)";
+    std::filesystem::path image_dir = "images_4";
+    std::filesystem::path sparse_dir = "sparse/0";
+    std::filesystem::path mask_dir = "";
+    std::filesystem::path output_dir = R"(D:\vksplat\output\cpp_train)";
+    std::string output_ply_filename = "splat.ply";
+};
+
+void print_usage(const char* exe) {
+    std::cout
+        << "Usage: " << exe << " [options]\n"
+        << "  --shader-dir PATH      Directory containing shader/ generated SPIR-V files (default: shader)\n"
+        << "  --dataset-dir PATH     COLMAP dataset root\n"
+        << "  --image-dir PATH       Image subdirectory under dataset root (default: images_4)\n"
+        << "  --sparse-dir PATH      Sparse COLMAP subdirectory under dataset root (default: sparse/0)\n"
+        << "  --mask-dir PATH        Optional mask subdirectory under dataset root\n"
+        << "  --output-dir PATH      Output directory\n"
+        << "  --output-ply NAME      Output PLY file name (default: splat.ply)\n"
+        << "  --steps N              Number of training steps (default: 30000)\n"
+        << "  --device ID            Vulkan device index (default: -1 auto)\n"
+        << "  --help                 Show this help\n";
+}
+
+AppOptions parse_options(int argc, char** argv) {
+    AppOptions options;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto need_value = [&](const char* name) -> std::string {
+            if (i + 1 >= argc)
+                throw std::runtime_error(std::string("Missing value for ") + name);
+            return argv[++i];
+        };
+
+        if (arg == "--help") {
+            print_usage(argv[0]);
+            std::exit(0);
+        } else if (arg == "--shader-dir") {
+            options.shader_dir = need_value("--shader-dir");
+        } else if (arg == "--dataset-dir") {
+            options.dataset_dir = need_value("--dataset-dir");
+        } else if (arg == "--image-dir") {
+            options.image_dir = need_value("--image-dir");
+        } else if (arg == "--sparse-dir") {
+            options.sparse_dir = need_value("--sparse-dir");
+        } else if (arg == "--mask-dir") {
+            options.mask_dir = need_value("--mask-dir");
+        } else if (arg == "--output-dir") {
+            options.output_dir = need_value("--output-dir");
+        } else if (arg == "--output-ply") {
+            options.output_ply_filename = need_value("--output-ply");
+        } else if (arg == "--steps") {
+            options.train_steps = std::stoi(need_value("--steps"));
+        } else if (arg == "--device") {
+            options.train_device_id = std::stoi(need_value("--device"));
+        } else {
+            throw std::runtime_error("Unknown argument: " + arg);
+        }
+    }
+    return options;
+}
 
 std::string with_trailing_separator(const std::filesystem::path& path) {
     if (path.empty())
@@ -35,16 +91,16 @@ std::string bytes_to_mib(size_t bytes) {
     return std::to_string(static_cast<double>(bytes) / (1024.0 * 1024.0)) + " MiB";
 }
 
-TrainerConfig make_default_config() {
+TrainerConfig make_default_config(const AppOptions& options) {
     TrainerConfig config;
 
-    config.output_dir = with_trailing_separator(kOutputDir);
-    config.output_ply = (kOutputDir / kOutputPlyFilename).string();
+    config.output_dir = with_trailing_separator(options.output_dir);
+    config.output_ply = (options.output_dir / options.output_ply_filename).string();
 
-    config.dataset_dir = with_trailing_separator(kDatasetDir);
-    config.image_dir = with_trailing_separator(kDatasetDir / kImageDir);
-    config.mask_dir = kMaskDir.empty() ? "" : with_trailing_separator(kDatasetDir / kMaskDir);
-    config.sparse_dir = with_trailing_separator(kDatasetDir / kSparseDir);
+    config.dataset_dir = with_trailing_separator(options.dataset_dir);
+    config.image_dir = with_trailing_separator(options.dataset_dir / options.image_dir);
+    config.mask_dir = options.mask_dir.empty() ? "" : with_trailing_separator(options.dataset_dir / options.mask_dir);
+    config.sparse_dir = with_trailing_separator(options.dataset_dir / options.sparse_dir);
     config.eval_interval = 8;
 
     config.image_cache_device = TrainerConfig::CacheImage::CPU;
@@ -54,7 +110,7 @@ TrainerConfig make_default_config() {
     config.init_opacity = 0.1f;
     config.strategy = TrainerConfig::Strategy::Default;
 
-    config.max_steps = kTrainSteps;
+    config.max_steps = options.train_steps;
     config.ssim_lambda = 0.2f;
     config.means_lr = 1.6e-4f;
     config.means_lr_final = 1.6e-6f;
@@ -91,13 +147,14 @@ TrainerConfig make_default_config() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     TrainingSession session;
     bool initialized = false;
 
     try {
-        const TrainerConfig config = make_default_config();
-        const std::string spirv_dir = with_trailing_separator(kProjectDir / "shader");
+        const AppOptions options = parse_options(argc, argv);
+        const TrainerConfig config = make_default_config(options);
+        const std::string spirv_dir = with_trailing_separator(options.shader_dir);
 
         std::filesystem::create_directories(config.output_dir);
 
@@ -107,7 +164,7 @@ int main() {
         std::cout << "Sparse:  " << config.sparse_dir << '\n';
         std::cout << "Output:  " << config.output_dir << '\n';
 
-        session.initialize(spirv_dir, kTrainDeviceId);
+        session.initialize(spirv_dir, options.train_device_id);
         initialized = true;
         session.set_train_config(config);
 
@@ -116,10 +173,10 @@ int main() {
             throw std::runtime_error("No training images were loaded");
 
         auto start = std::chrono::steady_clock::now();
-        for (int step = 0; step < kTrainSteps; ++step) {
+        for (int step = 0; step < options.train_steps; ++step) {
             session.train_step(static_cast<size_t>(step) % num_train, step);
-            if (step == 0 || (step + 1) % kProgressInterval == 0 || step + 1 == kTrainSteps) {
-                std::cout << "Step " << (step + 1) << '/' << kTrainSteps
+            if (step == 0 || (step + 1) % kProgressInterval == 0 || step + 1 == options.train_steps) {
+                std::cout << "Step " << (step + 1) << '/' << options.train_steps
                           << " | splats=" << session.num_splats()
                           << " | vram=" << bytes_to_mib(session.get_vram_usage())
                           << " | peak=" << bytes_to_mib(session.get_peak_vram_usage())

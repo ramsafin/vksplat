@@ -29,8 +29,8 @@ layout (push_constant) uniform PushConstant {
 shared uint32_t localHistogram[RADIX];
 
 void main() {
-  uint threadIndex = gl_SubgroupInvocationID;  // 0..31
-  uint subgroupIndex = gl_SubgroupID;  // 0..31
+  uint threadIndex = gl_SubgroupInvocationID;  // subgroup lane
+  uint subgroupIndex = gl_SubgroupID;  // workgroup subgroup
   uint index = subgroupIndex * gl_SubgroupSize + threadIndex;
 
   uint elementCount = uniforms.elementCount;

@@ -15,21 +15,31 @@ endif()
 
 # Find required packages
 find_package(Vulkan REQUIRED)
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
 
-# Find pybind11
-find_package(pybind11 QUIET)
-if(NOT pybind11_FOUND)
-    # If pybind11 is not found, download it
-    message(STATUS "Downloading pybind11")
-    include(FetchContent)
-    FetchContent_Declare(
-        pybind11
-        GIT_REPOSITORY https://github.com/pybind/pybind11
-        GIT_TAG        v2.11.1
-        GIT_SHALLOW    TRUE
-    )
-    FetchContent_MakeAvailable(pybind11)
+if(CMAKE_SYSTEM_NAME STREQUAL "OHOS")
+    set(VKSPLAT_BUILD_PYTHON_DEFAULT OFF)
+else()
+    set(VKSPLAT_BUILD_PYTHON_DEFAULT ON)
+endif()
+option(VKSPLAT_BUILD_PYTHON "Build the pybind11 Python extension" ${VKSPLAT_BUILD_PYTHON_DEFAULT})
+
+if(VKSPLAT_BUILD_PYTHON)
+    find_package(Python COMPONENTS Interpreter Development REQUIRED)
+
+    # Find pybind11
+    find_package(pybind11 QUIET)
+    if(NOT pybind11_FOUND)
+        # If pybind11 is not found, download it
+        message(STATUS "Downloading pybind11")
+        include(FetchContent)
+        FetchContent_Declare(
+            pybind11
+            GIT_REPOSITORY https://github.com/pybind/pybind11
+            GIT_TAG        v2.11.1
+            GIT_SHALLOW    TRUE
+        )
+        FetchContent_MakeAvailable(pybind11)
+    endif()
 endif()
 
 # Find GLM
@@ -101,22 +111,27 @@ endif()
 # Platform-specific settings
 if(WIN32)
     target_compile_definitions(vksplat_core PUBLIC VK_USE_PLATFORM_WIN32_KHR)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "OHOS")
+    # VkSplat currently uses compute-only Vulkan and does not create surfaces on
+    # OHOS.  Do not define Xlib/Win32/MoltenVK platform macros for this target.
 elseif(UNIX AND NOT APPLE)
     target_compile_definitions(vksplat_core PUBLIC VK_USE_PLATFORM_XLIB_KHR)
 elseif(APPLE)
     target_compile_definitions(vksplat_core PUBLIC VK_USE_PLATFORM_MACOS_MVK)
 endif()
 
-# Create the Python module from the bindings adapter only.
-pybind11_add_module(vksplat src/python_bindings.cpp)
-target_link_libraries(vksplat PRIVATE vksplat_core)
-target_compile_definitions(vksplat PRIVATE VERSION_INFO=${EXAMPLE_VERSION_INFO})
+if(VKSPLAT_BUILD_PYTHON)
+    # Create the Python module from the bindings adapter only.
+    pybind11_add_module(vksplat src/python_bindings.cpp)
+    target_link_libraries(vksplat PRIVATE vksplat_core)
+    target_compile_definitions(vksplat PRIVATE VERSION_INFO=${EXAMPLE_VERSION_INFO})
 
-# Set properties
-set_target_properties(vksplat PROPERTIES
-    CXX_VISIBILITY_PRESET "hidden"
-    INTERPROCEDURAL_OPTIMIZATION TRUE
-)
+    # Set properties
+    set_target_properties(vksplat PROPERTIES
+        CXX_VISIBILITY_PRESET "hidden"
+        INTERPROCEDURAL_OPTIMIZATION TRUE
+    )
+endif()
 
 # Native C++ training executable. It uses the reusable core library directly and
 # does not link against Python, pybind11, NumPy, or the Python viewer.
@@ -125,4 +140,7 @@ target_link_libraries(vksplat_train PRIVATE vksplat_core)
 target_compile_features(vksplat_train PRIVATE cxx_std_17)
 
 # Install target
-install(TARGETS vksplat DESTINATION .)
+if(VKSPLAT_BUILD_PYTHON)
+    install(TARGETS vksplat DESTINATION .)
+endif()
+install(TARGETS vksplat_train DESTINATION .)

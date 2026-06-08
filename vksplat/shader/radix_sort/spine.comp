@@ -28,8 +28,8 @@ shared uint32_t reduction;
 shared uint32_t intermediate[SUBGROUP_SIZE];
 
 void main() {
-  uint threadIndex = gl_SubgroupInvocationID;  // 0..31
-  uint subgroupIndex = gl_SubgroupID;  // 0..15
+  uint threadIndex = gl_SubgroupInvocationID;  // subgroup lane
+  uint subgroupIndex = gl_SubgroupID;  // workgroup subgroup
   uint index = subgroupIndex * gl_SubgroupSize + threadIndex;
   uint radix = gl_WorkGroupID.x;
 

@@ -264,7 +264,7 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
         deviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
         deviceProperties2.pNext = &subgroupProperties;
         vkGetPhysicalDeviceProperties2(device, &deviceProperties2);
-        bool validSubgroupSize = subgroupProperties.subgroupSize >= SUBGROUP_SIZE;
+        bool validSubgroupSize = subgroupProperties.subgroupSize == SUBGROUP_SIZE;
 
         // check compute pipeline.support
         uint32_t queue_family_count = 0;
@@ -351,9 +351,9 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
         );
         if (softViable) {
             if (!hasInt64)
-                printf("  \033[%dm%s\033[m\n", kANSIOrange, "WARNING: To use this device, shaders must be compiled with USE_EMULATED_INT64=1.");
+                printf("  \033[%dm%s\033[m\n", kANSIOrange, "INFO: Native Int64 is not available; OHOS shader profile uses USE_EMULATED_INT64=1.");
             if (!hasFloat32AtomicAdd)
-                printf("  \033[%dm%s\033[m\n", kANSIOrange, "WARNING: To use this device, shaders must be compiled with USE_EMULATED_F32_ATOMIC=1.");
+                printf("  \033[%dm%s\033[m\n", kANSIOrange, "INFO: Native Float32AtomicAdd is not available; OHOS shader profile uses USE_EMULATED_F32_ATOMIC=1.");
             if (!validGroupCount[3])
                 printf("  \033[%dm%s\033[m\n", kANSIOrange, "WARNING: This device may not work if you want to train a large scene.");
             if (!validSharedSize)
@@ -385,9 +385,9 @@ void VulkanGSPipeline::selectPhysicalDevice(int device_id) {
         viableDevices.empty() ? " (\033[93mPOSSIBLY VIABLE\033[m)" : ""
     );
     if (!deviceInfo.hasFloat32AtomicAdd)
-        printf("\033[%dm%s\033[m\n", kANSIOrange, "WARNING: Float32AtomicAdd is not available. Make sure shaders are compiled with USE_EMULATED_F32_ATOMIC=1.");
+        printf("\033[%dm%s\033[m\n", kANSIOrange, "INFO: Float32AtomicAdd is not available; using OHOS shader profile with USE_EMULATED_F32_ATOMIC=1.");
     if (!deviceInfo.hasInt64)
-        printf("\033[%dm%s\033[m\n", kANSIOrange, "WARNING: Int64 is not available. Make sure shaders are compiled with USE_EMULATED_INT64=1.");
+        printf("\033[%dm%s\033[m\n", kANSIOrange, "INFO: Int64 is not available; using OHOS shader profile with USE_EMULATED_INT64=1.");
     printf("\n");
     fflush(stdout);
 }
@@ -422,32 +422,19 @@ void VulkanGSPipeline::createDevice() {
     if (deviceInfo.hasInt64)
         enabledFeatures.shaderInt64 = VK_TRUE;
 
-    VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_float_features = {};
-    atomic_float_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
-    atomic_float_features.shaderBufferFloat32AtomicAdd = VK_TRUE;
-    atomic_float_features.pNext = VK_NULL_HANDLE;
-
-    VkPhysicalDeviceSubgroupSizeControlFeaturesEXT subgroupSizeControlFeatures = {};
-    subgroupSizeControlFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT;
-    subgroupSizeControlFeatures.subgroupSizeControl = VK_TRUE;
-    subgroupSizeControlFeatures.computeFullSubgroups = VK_TRUE;
-    subgroupSizeControlFeatures.pNext = VK_NULL_HANDLE;
-    if (deviceInfo.hasFloat32AtomicAdd)
-        subgroupSizeControlFeatures.pNext = &atomic_float_features;
-
+    // Maleoon 910/OHOS target profile: the device has a fixed subgroup size,
+    // does not expose VK_EXT_subgroup_size_control, and does not expose native
+    // VK_EXT_shader_atomic_float.  The shaders are compiled for the fixed
+    // subgroup size and use emulated float atomics instead, so do not request
+    // either optional extension at device creation time.
     VkDeviceCreateInfo create_info = {};
     create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     create_info.pQueueCreateInfos = &queue_create_info;
     create_info.queueCreateInfoCount = 1;
     create_info.pEnabledFeatures = &enabledFeatures;
-
-    std::vector<const char*> device_extensions = {
-        VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
-        VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
-    };
-    create_info.enabledExtensionCount = (uint32_t)device_extensions.size();
-    create_info.ppEnabledExtensionNames = device_extensions.data();
-    create_info.pNext = &subgroupSizeControlFeatures;
+    create_info.enabledExtensionCount = 0;
+    create_info.ppEnabledExtensionNames = nullptr;
+    create_info.pNext = nullptr;
 
     if (vkCreateDevice(physical_device, &create_info, nullptr, &device) != VK_SUCCESS) {
         _THROW_ERROR("Failed to create device");
@@ -856,20 +843,14 @@ void VulkanGSPipeline::createComputePipeline(_ComputePipeline &pipeline, const s
         _THROW_ERROR("Failed to create pipeline set layout");
     }
 
-    VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT req = {};
-    req.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT;
-    req.requiredSubgroupSize = SUBGROUP_SIZE;  // 32
-
     VkPipelineShaderStageCreateInfo compute_shader_stage_info = {};
     compute_shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     compute_shader_stage_info.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     compute_shader_stage_info.module = pipeline.shader;
     compute_shader_stage_info.pName = "main";
-    if (compatible_subgroup_size && (
-        deviceInfo.subgroupSize != SUBGROUP_SIZE ||
-        deviceInfo.vendor == DeviceVendor::Intel_R_
-    ))
-        compute_shader_stage_info.pNext = &req;
+    // OHOS/Maleoon does not expose VK_EXT_subgroup_size_control.  Pipelines
+    // therefore rely on the device fixed subgroup size matching SUBGROUP_SIZE.
+    (void)compatible_subgroup_size;
 
     VkComputePipelineCreateInfo pipeline_info = {};
     pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;

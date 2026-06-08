@@ -64,13 +64,22 @@ keyType loadLocalHistogramAlias(uint idx) {
   #endif
 }
 
-// returns 0b00000....11111, where msb is id-1.
+uint GetExclusiveSubgroupMaskWord(uint id, uint word) {
+  uint start = 32u * word;
+  if (id >= start + 32u) return 0xffffffffu;
+  if (id <= start) return 0u;
+  return (1u << (id - start)) - 1u;
+}
+
+// returns 0b00000....11111, where msb is id-1.  Build each 32-bit
+// component separately so fixed 64-wide subgroups do not rely on undefined
+// shifts by negative values or by >= 32 bits.
 uvec4 GetExclusiveSubgroupMask(uint id) {
   return uvec4(
-    (1 << id) - 1,
-    (1 << (id - 32)) - 1,
-    (1 << (id - 64)) - 1,
-    (1 << (id - 96)) - 1
+    GetExclusiveSubgroupMaskWord(id, 0u),
+    GetExclusiveSubgroupMaskWord(id, 1u),
+    GetExclusiveSubgroupMaskWord(id, 2u),
+    GetExclusiveSubgroupMaskWord(id, 3u)
   );
 }
 
@@ -80,8 +89,8 @@ uint GetBitCount(uvec4 value) {
 }
 
 void main() {
-  uint threadIndex = gl_SubgroupInvocationID;  // 0..31
-  uint subgroupIndex = gl_SubgroupID;  // 0..15
+  uint threadIndex = gl_SubgroupInvocationID;  // subgroup lane
+  uint subgroupIndex = gl_SubgroupID;  // workgroup subgroup
   uint index = subgroupIndex * gl_SubgroupSize + threadIndex;
   uvec4 subgroupMask = GetExclusiveSubgroupMask(threadIndex);
 

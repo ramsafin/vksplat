@@ -1,5 +1,5 @@
 #ifndef BLOCK_SIZE
-static const uint BLOCK_SIZE = 1024;
+static const uint BLOCK_SIZE = 512;
 #endif
 
 layout(binding=0) StructuredBuffer<int32_t> g_input;  // (N,)

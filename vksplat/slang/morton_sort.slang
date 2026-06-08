@@ -17,9 +17,12 @@
 layout(binding=0) StructuredBuffer<float> means;  // (N, 3)
 layout(binding=1) RWByteAddressBuffer stats;  // (2, 3), sum of x and x^2
 
-groupshared float3 shared_mean[SUBGROUP_SIZE], shared_mean2[SUBGROUP_SIZE];
+#define MORTON_STATS_WORKGROUP_SIZE 512
+#define MORTON_STATS_NUM_SUBGROUPS (MORTON_STATS_WORKGROUP_SIZE / SUBGROUP_SIZE)
 
-[numthreads(SUBGROUP_SIZE*SUBGROUP_SIZE, 1, 1)]
+groupshared float3 shared_mean[MORTON_STATS_NUM_SUBGROUPS], shared_mean2[MORTON_STATS_NUM_SUBGROUPS];
+
+[numthreads(MORTON_STATS_WORKGROUP_SIZE, 1, 1)]
 void main(
     uint3 threadID : SV_DispatchThreadID,
     uint3 groupThreadID : SV_GroupThreadID,
@@ -49,8 +52,8 @@ void main(
     GroupMemoryBarrierWithGroupSync();
 
     if (subgroup_id == 0) {
-        mean = shared_mean[lane_id];
-        mean2 = shared_mean2[lane_id];
+        mean = lane_id < MORTON_STATS_NUM_SUBGROUPS ? shared_mean[lane_id] : float3(0);
+        mean2 = lane_id < MORTON_STATS_NUM_SUBGROUPS ? shared_mean2[lane_id] : float3(0);
         mean = WaveActiveSum(mean);
         mean2 = WaveActiveSum(mean2);
         if (lane_id == 0) {
@@ -190,7 +193,7 @@ layout(binding=0) RWStructuredBuffer<int32_t> sorted_gauss_idx;  // (N,)
 layout(binding=1) StructuredBuffer<float> buffer_in;
 layout(binding=2) RWStructuredBuffer<float> buffer_out;
 
-[numthreads(1024, 1, 1)]
+[numthreads(512, 1, 1)]
 void main(
     uint3 threadID : SV_DispatchThreadID,
     uniform uint32_t[2] uniforms
@@ -214,7 +217,7 @@ void main(
 layout(binding=0) StructuredBuffer<float> buffer_temp;
 layout(binding=1) RWStructuredBuffer<float> buffer_in;
 
-[numthreads(1024, 1, 1)]
+[numthreads(512, 1, 1)]
 void main(
     uint3 threadID : SV_DispatchThreadID,
     uniform uint[2] uniforms
@@ -238,7 +241,7 @@ layout(binding=0) RWStructuredBuffer<int32_t> sorted_gauss_idx;  // (N,)
 layout(binding=1) StructuredBuffer<float4> buffer_in;
 layout(binding=2) RWStructuredBuffer<float4> buffer_out;
 
-[numthreads(1024, 1, 1)]
+[numthreads(512, 1, 1)]
 void main(
     uint3 threadID : SV_DispatchThreadID,
     uniform uint[3] uniforms
@@ -264,7 +267,7 @@ void main(
 layout(binding=0) StructuredBuffer<float4> buffer_temp;
 layout(binding=1) RWStructuredBuffer<float4> buffer_in;
 
-[numthreads(1024, 1, 1)]
+[numthreads(512, 1, 1)]
 void main(
     uint3 threadID : SV_DispatchThreadID,
     uniform uint[3] uniforms
